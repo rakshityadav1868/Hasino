@@ -239,6 +239,121 @@ Nothing about correctness depends on the workers running. An expired hold stops
 consuming a chair by the clock, not by being swept — a dead worker leaves stale
 rows and unsent email, never an oversold slot.
 
+## Keeping the free service awake
+
+A Render **free** web service spins down after **15 minutes with no inbound
+HTTP traffic**, and the next visitor pays for the wake. Measured on this
+deployment: **13.5s**. Render documents up to a minute. That loading page is
+the platform, not the app.
+
+The fix is inbound HTTP on a clock, from outside. **cron-job.org** does it —
+free, no card, one-minute resolution — fetching:
+
+```
+https://hasino.onrender.com/healthz     every 10 minutes
+```
+
+`/healthz` is the right target: it answers without touching Postgres, so it
+wakes the process without loading the database every few minutes.
+
+Nothing in this repo schedules that, and nothing should. cron-job.org fetches
+the URL from its own servers; it does not run our code, so the request *is* the
+whole job. A CI workflow doing the same thing on its own clock would be a
+second scheduler to maintain that changes no outcome.
+
+### Restrict it to 00:00-18:00 UTC
+
+**This part is not optional, and cron-job.org does not do it by default.**
+
+Render gives a **workspace** 750 free instance-hours per calendar month, shared
+across every free service, and a sleeping service consumes none. A 31-day month
+is 744 hours:
+
+| Coverage | Instance-hours/month | Result |
+|---|---|---|
+| 24/7, one service | ~744 | Admin panel gets ~6 hours, then **every** free service is suspended until the 1st |
+| 18h/day, one service | ~564 | ~186 hours spare for the admin panel and overnight traffic |
+| 18h/day, both services | ~1128 | Everything goes dark around the 16th |
+
+So in the cron-job.org job's schedule, select **hours 0-17 UTC** and leave the
+rest unchecked. That is **05:30-23:30 IST**, which covers every plausible
+booking hour. A visitor at 3am still waits for a cold start; that is the price
+of staying inside the budget, and it is cheaper than the whole workspace going
+dark mid-month.
+
+Point it at `hasino` only. **Do not add a second job for `hasino-admin`.**
+
+### Confirming it actually works
+
+Do not trust a fast reply, and do not trust the pinger's own dashboard. Asking
+is what makes the service awake, so a quick response proves nothing about the
+minute before you asked — and a scheduler showing green rows only proves it
+sent a request somewhere. This repo has already had one cron that was
+configured, showed no errors, and had never run.
+
+`/healthz` reports `uptimeSeconds`. A free-tier spin-down destroys the process,
+so uptime is time since the last cold start, and one request settles it:
+
+```
+curl -s https://hasino.onrender.com/healthz
+{"ok":true,"uptimeSeconds":15042}
+```
+
+- **Uptime of hours** — nothing has let the service sleep. It is working.
+- **Uptime of seconds** — this request woke it. It is **not** working.
+
+Check it after the service has been left alone for a while, not right after
+loading the site yourself.
+
+`scripts/keepalive.ts` wraps the same request and states the verdict in words:
+
+```
+KEEPALIVE_URL=https://hasino.onrender.com/healthz node scripts/keepalive.ts
+```
+
+```
+keepalive: service uptime 4h 12m — it has not been allowed to sleep in that
+time, so the pinger is working.
+```
+
+Set `KEEPALIVE_EXPECT_AWAKE=true` to make it exit 1 on a just-woken service, so
+it can be a monitored check rather than something a human reads.
+
+### Two ways a keepalive silently reports green, both guarded
+
+Both are Render answering *instead of* the app, so the request never wakes it:
+
+- **`/robots.txt`** — Render's edge serves it while a service is spun down. The
+  script refuses to start if pointed there.
+- **A mistyped hostname** — an unrouted `*.onrender.com` host returns `404` with
+  `x-render-routing: no-server`. Counting any HTTP status as success would read
+  that as healthy forever. The script treats that header as a failed ping.
+
+### Running the pinger somewhere else
+
+If cron-job.org ever lapses, `scripts/keepalive.ts` is the same request in a
+form any scheduler can run — a laptop, a spare box, a paid Render cron. It
+depends on nothing but Node: no database, no provider keys.
+
+Env: `KEEPALIVE_INTERVAL_MS` (default 300000), `KEEPALIVE_DURATION_MS` (default
+300000; **0 means ping once and exit**, which is the right shape for a
+scheduler with its own cadence), `KEEPALIVE_TIMEOUT_MS` (30000),
+`KEEPALIVE_ATTEMPTS` (3). Exit 0 if a ping reached the app, 1 if none did.
+
+### The background jobs are a different problem
+
+The `hasino-jobs` cron in `render.yaml` **has never run** — `GET /readyz`
+returns `"cron": null`, and that field is written on every invocation, because
+Render Cron Jobs are not on the free plan. It would not have fixed cold starts
+anyway: it talks to Postgres and never sends the web service an HTTP request,
+and the idle timer only counts HTTP.
+
+The keepalive covers it as a side effect. While the web service is awake,
+`startWorkers()` is running its interval loops, so holds expire and mail sends
+on time. Between 18:00 and 00:00 UTC the jobs pause; every job sweeps by
+timestamp rather than by tick, so they catch up on the next wake instead of
+losing work.
+
 ## Migrations
 
 `db/schema.sql` is the whole schema — the baseline, not a migration. The

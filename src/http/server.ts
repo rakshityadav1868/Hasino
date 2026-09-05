@@ -278,7 +278,22 @@ async function route(db: Pool, req: IncomingMessage, res: ServerResponse): Promi
   // probe that touches Postgres therefore turns a database blip into a rolling
   // restart of every instance, which is how a brief outage becomes a long one.
   if (read && path === '/healthz') {
-    return json(res, 200, { ok: true });
+    // uptimeSeconds is what makes the keepalive verifiable, and it is the only
+    // reason this returns more than `{ ok: true }`.
+    //
+    // On Render's free tier the process is destroyed when the service spins
+    // down and a new one starts on the next request, so uptime is time since
+    // the last cold start. That turns a single request into a complete answer
+    // about whether the external pinger is doing its job: hours of uptime
+    // means nothing has let the service fall asleep, and a handful of seconds
+    // means this very request paid for the wake. Without it you cannot tell a
+    // working keepalive from a broken one — both return `{ ok: true }`, and a
+    // fast reply only proves the service is awake *now*, which the act of
+    // asking guarantees. See scripts/keepalive.ts.
+    //
+    // Deliberately still free of I/O: this is the liveness probe, and reading
+    // process.uptime() costs nothing.
+    return json(res, 200, { ok: true, uptimeSeconds: Math.round(process.uptime()) });
   }
 
   if (read && (path === '/readyz' || path === '/health')) {

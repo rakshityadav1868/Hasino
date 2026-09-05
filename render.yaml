@@ -11,7 +11,13 @@
 # knowing before you trust anything you see here:
 #
 #   1. The first request after an idle period is slow. That is the platform,
-#      not the app.
+#      not the app. This is now largely handled: cron-job.org fetches /healthz
+#      every 10 minutes between 00:00 and 18:00 UTC (05:30-23:30 IST), which is
+#      the inbound HTTP that resets Render's idle timer. Outside that window the
+#      service still sleeps, on purpose — 750 free instance-hours a month across
+#      the whole workspace against 744 hours in a 31-day month means a 24/7 ping
+#      would starve every other free service. DEPLOY.md has the arithmetic, and
+#      scripts/keepalive.ts is the same request in runnable form.
 #   2. The background workers run INSIDE this process (startWorkers in
 #      src/http/server.ts). While the service is asleep the hold sweeper, the
 #      refund worker and the notification sender are not running: abandoned
@@ -213,6 +219,29 @@ services:
   # Running it alongside the in-process workers is safe: every job takes the
   # same Postgres advisory lock first (workers/runner.ts), so an overlapping
   # tick finds the lock held and skips rather than doing work twice.
+  #
+  # STATUS, measured rather than assumed: this cron has NEVER RUN. GET /readyz
+  # on production returns `"cron": null`, and that field is written by
+  # recordCronHeartbeat on every single invocation — so the Render Cron Job was
+  # declared here but never actually created, which is what the free-plan
+  # caveat below predicts. Do not read this block as describing something that
+  # is running.
+  #
+  # It also could not have fixed the "app freezes for 15-20s" symptom even if
+  # it had run, and it is worth being precise about why: this container talks
+  # to Postgres and never makes an HTTP request to the web service. Render's
+  # idle timer counts INBOUND HTTP and WebSocket traffic only. A database-only
+  # job cannot reset it at any frequency. That is a separate mechanism, and it
+  # is the external pinger described in DEPLOY.md.
+  #
+  # Those two things do connect, though. While the keepalive holds the web
+  # service awake, startWorkers() in src/http/server.ts is running its interval
+  # loops, so holds expire and queued mail sends on time without this cron
+  # existing at all. Between 18:00 and 00:00 UTC the web service sleeps and the
+  # jobs pause; each job sweeps by timestamp rather than by tick, so they catch
+  # up on the next wake rather than losing work. If that overnight lag ever
+  # stops being acceptable, this cron (paid) is the fix — not a tighter
+  # keepalive, which would cost the whole free instance-hour budget.
   #
   # CAVEAT worth knowing before this applies cleanly: Render's Cron Jobs are
   # NOT part of the free plan — the cron runtime bills per run and the account
