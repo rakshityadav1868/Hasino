@@ -221,13 +221,25 @@ export async function signInWithGoogle() {
   try {
     await c.client.signIn.authenticateWithRedirect({
       strategy: 'oauth_google',
-      // In the app the return goes to /sso-callback/app, which the server
+      // In the app both of these go to /sso-callback/app, which the server
       // bounces to hasino:// so the Custom Tab closes and the app comes
-      // forward; on the web it goes to /sso-callback and finishes in the tab
-      // it started in. Both are ordinary https URLs, which is all Clerk
-      // accepts — the scheme hop happens server-side, not here.
+      // forward; on the web they keep their ordinary values and the sign-in
+      // finishes in the tab it started in.
+      //
+      // Both, not just redirectUrl, and that is the whole fix. redirectUrl is
+      // only used when Clerk needs a callback page to carry on; when Google
+      // supplies everything the sign-in completes in one hop and Clerk goes
+      // straight to redirectUrlComplete. Observed on a device: the tab went
+      // from Google to `/?__clerk_handshake=…` to `/#/home`, never touching
+      // /sso-callback/app, so the bounce never fired and the session was
+      // created in the browser — exactly the bug this is meant to end.
+      //
+      // The handshake token rides along in the query. It is what carries the
+      // authenticated state onto the origin, so bouncing the whole query into
+      // the app hands the WebView the session rather than leaving it in the
+      // tab that happened to finish the OAuth.
       redirectUrl: window.location.origin + (native ? NATIVE_CALLBACK_PATH : CALLBACK_PATH),
-      redirectUrlComplete: window.location.origin + routes.home,
+      redirectUrlComplete: window.location.origin + (native ? NATIVE_CALLBACK_PATH : routes.home),
     });
     return null; // navigating away
   } catch (err) {
@@ -304,6 +316,22 @@ async function signInWithGoogleNative(c, plugin, serverClientId) {
  */
 export async function completeRedirectCallback() {
   const c = await ensureClerk();
+
+  // The app's return does not arrive as an OAuth callback at all.
+  //
+  // Google supplies every attribute the sign-up needs, so Clerk completes in
+  // one hop and sends back a handshake token rather than a callback to resume.
+  // ensureClerk() above has already loaded clerk-js, which consumes that token
+  // from the query and establishes the session on this origin — which is the
+  // point of bouncing the whole query into the app rather than letting the tab
+  // keep it. By the time we get here the sign-in has therefore already
+  // succeeded, and handleRedirectCallback would throw looking for an attempt
+  // that no longer exists. Route on instead.
+  if (c.session) {
+    window.location.replace(routes.home);
+    return null;
+  }
+
   return c.handleRedirectCallback({
     continueSignUpUrl: routes.signIn,
     signInFallbackRedirectUrl: routes.home,
