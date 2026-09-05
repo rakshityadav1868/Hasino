@@ -10,19 +10,28 @@ import androidx.activity.OnBackPressedCallback;
 import com.getcapacitor.BridgeActivity;
 
 /**
- * The Hasino shell.
+ * The Hasino shell, plus the two ends of the Google sign-in round trip that
+ * Capacitor does not handle on its own.
  *
- * Sign-in is native: onCreate registers GoogleAuthPlugin, which draws Android's
- * Google account sheet over the WebView and returns a signed ID token to the
- * web layer. The token is exchanged with Clerk in the same WebView, so the
- * login never leaves for a browser and there is nothing to come back from — the
- * old Chrome/Custom-Tab/App-Link round trip is gone.
+ * Outbound: Google refuses OAuth in an embedded WebView, so the Google step has
+ * to leave for a browser. Capacitor's default is the full Chrome app, from
+ * which the sign-in never comes back. onCreate installs OAuthTabWebViewClient,
+ * which sends that hop to a Chrome Custom Tab instead.
  *
- * A /sso-callback deep link can still arrive from outside the app (a web sign-in
- * on a device that has the app installed, an email link). AndroidManifest.xml
- * claims it, and loadAppLink() loads it into the WebView rather than letting the
- * browser keep it — Capacitor only notifies plugins on such an intent and would
- * otherwise drop it. The app's own sign-in no longer uses this path.
+ * Inbound: the tab ends on hasino://sso-callback (the server bounces
+ * /sso-callback/app there), which closes the tab and delivers the callback
+ * here. AndroidManifest.xml also still claims the https /sso-callback App Link,
+ * so a callback arriving from outside — an email link, a web sign-in on a
+ * device that has the app — lands here too. Either way Capacitor's own
+ * onNewIntent only notifies plugins and navigates nothing, so loadAppLink()
+ * loads the URL into the WebView. That is where it has to finish: the WebView
+ * holds the client state that started the sign-in, which is the whole reason
+ * the return must not stay in the browser.
+ *
+ * Native sign-in (GoogleAuthPlugin, registered below) skips all of this when
+ * the deployment has its own Google credentials — the account sheet is drawn
+ * over the WebView and no browser opens. Unconfigured, the browser round trip
+ * above is what runs.
  */
 public class MainActivity extends BridgeActivity {
 
@@ -36,6 +45,18 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(GoogleAuthPlugin.class);
 
         super.onCreate(savedInstanceState);
+
+        // Send the Google OAuth hop to a Chrome Custom Tab instead of the full
+        // browser. This is the outbound half of the return trip: a tab follows
+        // the hasino:// redirect the server ends the sign-in on and hands the
+        // app back the foreground, which the full browser does not do. Capacitor's
+        // default WebViewClient sends every off-origin navigation to that full
+        // browser, so swap in one that diverts just those; it delegates
+        // everything else to Capacitor unchanged.
+        if (getBridge() != null && getBridge().getWebView() != null) {
+            getBridge().getWebView().setWebViewClient(new OAuthTabWebViewClient(getBridge()));
+        }
+
         getOnBackPressedDispatcher().addCallback(this, backCallback);
         // A /sso-callback deep link can still arrive (an email confirmation, a
         // web sign-in on a device that has the app). Kept so it lands in the app

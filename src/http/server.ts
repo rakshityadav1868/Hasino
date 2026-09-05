@@ -390,6 +390,29 @@ async function route(db: Pool, req: IncomingMessage, res: ServerResponse): Promi
     return json(res, result.status, { received: true, outcome: result.outcome });
   }
 
+  // ---------- Android app: hand the OAuth return back to the app ----------
+  // A sign-in that began in the Android app returns here, and this bounces it
+  // to hasino://, which closes the Chrome Custom Tab the Google step ran in and
+  // brings the app forward.
+  //
+  // The hop exists because neither half works alone. Clerk only accepts an
+  // https redirect, so the app cannot ask Google to end on a custom scheme
+  // directly. App Links would remove the hop, but their install-time
+  // verification is flaky and fails closed — the browser simply keeps the user,
+  // which is the bug this exists to fix. And a full Chrome window will not
+  // follow a 302 into an external scheme at all, because Chrome requires a user
+  // gesture to launch one. A Custom Tab is bound to the app that opened it and
+  // does follow it, needing no verification of any kind.
+  //
+  // MainActivity rebuilds the query onto the app's own origin and discards
+  // everything else, so nothing here is trusted beyond being reflected back.
+  // The query — Clerk's handshake parameters — is carried across verbatim; it
+  // is what lets the app's WebView finish the sign-in it started.
+  if (read && path === '/sso-callback/app') {
+    res.writeHead(302, { Location: `hasino://sso-callback${url.search}` });
+    return void res.end();
+  }
+
   // ---------- pages + assets ----------
   // Pages are served either way — production users sign in with real Google
   // auth. Only the x-dev-user bypass and /api/dev/identities (below) are

@@ -91,11 +91,12 @@ const config: CapacitorConfig = {
   },
   server: {
     url: APP_URL,
-    // Anything the site navigates to stays inside the app. Google sign-in no
-    // longer navigates anywhere: it is native (GoogleAuthPlugin draws the
-    // account sheet over the WebView and returns a token), so there is no OAuth
-    // hop to a browser to keep inside the app in the first place. See
-    // README-ANDROID.md.
+    // Anything the site itself navigates to stays inside the app. The OAuth hop
+    // to Google deliberately does NOT — Google refuses OAuth from an embedded
+    // WebView, so a browser has to take that step. It is opened in a Chrome
+    // Custom Tab (OAuthTabWebViewClient.java) rather than the full browser,
+    // because a tab follows the hasino:// redirect the sign-in ends on and puts
+    // the app back in front. See README-ANDROID.md.
     allowNavigation: ADMIN_URL ? [new URL(APP_URL).host, new URL(ADMIN_URL).host] : [new URL(APP_URL).host],
   },
   plugins: {

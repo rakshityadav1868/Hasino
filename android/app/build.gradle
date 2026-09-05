@@ -59,6 +59,11 @@ dependencies {
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    // Chrome Custom Tabs. The Google OAuth hop is opened here rather than in the
+    // full browser: a tab is bound to the app that opened it, so it follows the
+    // hasino:// redirect that ends the sign-in, closes, and puts the app back in
+    // front. The full browser does neither. See OAuthTabWebViewClient.java.
+    implementation "androidx.browser:browser:1.8.0"
     // Native Google sign-in. Credential Manager draws the Google account sheet
     // over the app and returns a signed ID token, so the login never leaves for
     // a browser. See GoogleAuthPlugin.java.

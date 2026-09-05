@@ -115,6 +115,43 @@ export async function watchAuthState(handler) {
 const CALLBACK_PATH = '/sso-callback';
 
 /**
+ * The return path for a sign-in that started in the Android app.
+ *
+ * Google refuses OAuth inside an embedded WebView, so the Google step has to
+ * happen in a browser however this is arranged. The whole difficulty is getting
+ * that browser to hand focus back afterwards, and two arrangements have already
+ * failed here: a full Chrome window returning through App Links kept the
+ * foreground even once the session had crossed, and a full Chrome window
+ * following a 302 to a custom scheme never followed it at all, because Chrome
+ * will not launch an external scheme from a redirect the user did not initiate.
+ *
+ * What returns reliably is the pair, not either half: the hop is opened in a
+ * Chrome Custom Tab (OAuthTabWebViewClient.java), and the tab is sent to this
+ * https path, which the server answers with a 302 to `hasino://sso-callback`
+ * (see src/http/server.ts). A Custom Tab is bound to the app that opened it and
+ * does launch that scheme, which closes the tab and brings the app forward —
+ * the pattern every native OAuth library on Android uses. The scheme needs no
+ * assetlinks.json and no install-time verification, so there is nothing to fail
+ * closed.
+ *
+ * A path rather than a query parameter because Clerk rewrites the redirect it
+ * round-trips: a marker in the query does not survive, an exact URL does.
+ */
+const NATIVE_CALLBACK_PATH = '/sso-callback/app';
+
+/**
+ * The Google Web OAuth client id the server is configured with, or null.
+ *
+ * Null is the ordinary state, not an error: it is only set when the deployment
+ * has been given its own Google credentials (GOOGLE_WEB_CLIENT_ID), which is
+ * what native sign-in needs and the browser flow does not.
+ */
+async function googleWebClientId() {
+  const cfg = await (configPromise ??= fetch('/api/config').then((r) => r.json())).catch(() => null);
+  return cfg?.googleClientId ?? null;
+}
+
+/**
  * The native Google-sign-in plugin, when the page is running inside the app.
  *
  * The Android shell registers a `GoogleAuth` plugin (see GoogleAuthPlugin.java)
@@ -167,26 +204,29 @@ export function isRedirectCallback() {
 export async function signInWithGoogle() {
   const c = await ensureClerk();
 
-  if (isNativeApp()) {
-    // Inside the app the native path is the only path. Falling through to the
-    // redirect below would hand the sign-in to Chrome, and Chrome cannot give
-    // it back: the session it creates lives in its own cookie jar while this
-    // WebView, which has its own storage, still shows a sign-in button. So a
-    // missing bridge is reported, not routed around.
+  const native = isNativeApp();
+
+  if (native) {
+    // Native when the deployment has been given its own Google credentials:
+    // the account sheet is drawn over the WebView and no browser opens at all.
+    // Unconfigured — the usual case — this falls through to the redirect
+    // below, which is a working sign-in rather than a dead end.
     const plugin = nativeGoogleAuth();
-    if (!plugin) {
-      throw Object.assign(
-        new Error('Sign-in is unavailable in this version of the app. Please update it.'),
-        { code: 'NO_NATIVE_BRIDGE' },
-      );
+    const serverClientId = plugin ? await googleWebClientId() : null;
+    if (plugin && serverClientId) {
+      return signInWithGoogleNative(c, plugin, serverClientId);
     }
-    return signInWithGoogleNative(c, plugin);
   }
 
   try {
     await c.client.signIn.authenticateWithRedirect({
       strategy: 'oauth_google',
-      redirectUrl: window.location.origin + CALLBACK_PATH,
+      // In the app the return goes to /sso-callback/app, which the server
+      // bounces to hasino:// so the Custom Tab closes and the app comes
+      // forward; on the web it goes to /sso-callback and finishes in the tab
+      // it started in. Both are ordinary https URLs, which is all Clerk
+      // accepts — the scheme hop happens server-side, not here.
+      redirectUrl: window.location.origin + (native ? NATIVE_CALLBACK_PATH : CALLBACK_PATH),
       redirectUrlComplete: window.location.origin + routes.home,
     });
     return null; // navigating away
@@ -208,19 +248,10 @@ export async function signInWithGoogle() {
  * activates the session and routes home, the same finish as the web callback —
  * so watchAuthState() in app.js sees the new session and the app routes by role.
  */
-async function signInWithGoogleNative(c, plugin) {
-  // The Google *Web* OAuth client id the token must be minted for, so Clerk —
-  // configured with the same id — will accept it. Served from /api/config
-  // (GOOGLE_WEB_CLIENT_ID); it is public, the same id set as Clerk's Google
-  // credentials. Absent means the app's Google sign-in is not configured yet
-  // (see the setup notes) — say so rather than opening a sheet that cannot
-  // succeed, and never fall back to a browser.
-  const cfg = await (configPromise ?? fetch('/api/config').then((r) => r.json()));
-  const serverClientId = cfg?.googleClientId;
-  if (!serverClientId) {
-    throw Object.assign(new Error('Google sign-in is not set up for the app yet'), { code: 'NOT_CONFIGURED' });
-  }
-
+async function signInWithGoogleNative(c, plugin, serverClientId) {
+  // serverClientId is the Google *Web* OAuth client id the token must be minted
+  // for, so Clerk — configured with the same id — will accept it. The caller
+  // has already established it is set; this function is not reached otherwise.
   let idToken;
   try {
     const res = await plugin.signIn({ serverClientId });

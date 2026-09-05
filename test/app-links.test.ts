@@ -1,17 +1,34 @@
 /**
- * Google sign-in in the Android app is native — no browser at all.
+ * The Google sign-in round trip in the Android app, and how it comes home.
  *
- * The account sheet is drawn over the WebView by Credential Manager
- * (GoogleAuthPlugin), a signed Google ID token comes straight back, and it is
- * exchanged with Clerk in the same WebView (authenticateWithGoogleOneTap). The
- * old browser round trip — full Chrome, then Custom Tabs, then App-Link and
- * scheme returns — is gone, because none of it could reliably hand focus back
- * to the app once the OAuth was inside the browser.
+ * Google refuses OAuth inside an embedded WebView, so the Google step happens
+ * in a browser and that will not change. What must not happen is the browser
+ * *keeping* the result: it finishes the handshake in its own cookie jar, and
+ * the app the user started from is still signed out, because a WebView shares
+ * no storage with Chrome.
  *
- * What remains here of App Links is only the deep-link plumbing: assetlinks.json
- * and the manifest filters still let a /sso-callback link opened from *outside*
- * the app (a web sign-in on a device that has the app, an email link) land in
- * the app rather than the browser. The app's own sign-in no longer uses it.
+ * Two arrangements have already failed on a device here, and both are asserted
+ * against rather than merely avoided:
+ *
+ *   1. Full Chrome returning through App Links. The session did cross, but the
+ *      browser kept the foreground — the user had to close Chrome by hand to
+ *      find the app. And App Links rest on an install-time verification that
+ *      fails closed, so when it does not hold the browser simply keeps the URL.
+ *   2. Full Chrome following a 302 into `hasino://`. Chrome will not launch an
+ *      external scheme from a redirect the user did not initiate, so nothing
+ *      happened at all.
+ *
+ * What works is the pair. The hop is opened in a Chrome Custom Tab
+ * (OAuthTabWebViewClient), which is bound to the app that opened it, and the
+ * sign-in ends on /sso-callback/app, which the server bounces to
+ * hasino://sso-callback. The tab launches the scheme, closes, and MainActivity
+ * is handed the callback with the app in front. No verification anywhere in
+ * that chain, so nothing can quietly fail closed.
+ *
+ * Native sign-in (GoogleAuthPlugin + authenticateWithGoogleOneTap) skips the
+ * browser entirely, but only where the deployment has its own Google
+ * credentials. Unconfigured — the ordinary case — the round trip above runs, so
+ * both paths are covered here.
  */
 import assert from 'node:assert/strict';
 import { describe, it, beforeEach, afterEach } from 'node:test';
@@ -103,8 +120,63 @@ describe('the app claims exactly the callback it is sent to', () => {
   });
 });
 
-describe('the app signs in natively, with no browser', () => {
+describe('the app sign-in leaves for a tab and comes back to the app', () => {
   const app = read('src/http/public/app.js');
+  const auth = read('src/http/public/lib/auth.js');
+  const server = read('src/http/server.ts');
+  const tabClient = read('android/app/src/main/java/com/hasino/app/OAuthTabWebViewClient.java');
+  const plugin = read('android/app/src/main/java/com/hasino/app/GoogleAuthPlugin.java');
+  const mainActivity = read('android/app/src/main/java/com/hasino/app/MainActivity.java');
+  const buildGradle = read('android/app/build.gradle');
+
+  it('opens the off-origin hop in a Custom Tab, not the full browser', () => {
+    // Capacitor's default for an off-origin navigation is ACTION_VIEW, which is
+    // the full Chrome app — the one browser that will neither give the
+    // foreground back nor follow the scheme the sign-in ends on. So the client
+    // diverts exactly those navigations and leaves everything else alone.
+    assert.match(tabClient, /extends BridgeWebViewClient/);
+    assert.match(tabClient, /CustomTabsIntent/);
+    assert.match(tabClient, /shouldOverrideUrlLoading/);
+    assert.match(tabClient, /isForMainFrame\(\)/);
+    assert.match(tabClient, /equalsIgnoreCase\(host\)/);
+    assert.match(tabClient, /return super\.shouldOverrideUrlLoading/);
+  });
+
+  it('is installed on the WebView at startup', () => {
+    assert.match(mainActivity, /setWebViewClient\(new OAuthTabWebViewClient\(getBridge\(\)\)\)/);
+    assert.match(buildGradle, /androidx\.browser:browser/);
+  });
+
+  it('ends the app sign-in on a path the server bounces to the scheme', () => {
+    // Clerk only accepts an https redirect, so the app cannot ask Google to end
+    // on hasino:// directly. It ends on /sso-callback/app instead and the
+    // server does the scheme hop — which is also why this is a path and not a
+    // query marker: Clerk rewrites the redirect it round-trips, so a marker
+    // does not survive and an exact URL does.
+    assert.match(auth, /NATIVE_CALLBACK_PATH = '\/sso-callback\/app'/);
+    assert.match(auth, /native \? NATIVE_CALLBACK_PATH : CALLBACK_PATH/);
+    assert.match(server, /path === '\/sso-callback\/app'/);
+    assert.match(server, /Location: `hasino:\/\/sso-callback\$\{url\.search\}`/);
+  });
+
+  it('leaves the web sign-in on its own callback', () => {
+    // A desktop browser finishes where it started. Only the app takes the hop.
+    assert.match(auth, /const CALLBACK_PATH = '\/sso-callback'/);
+    assert.match(server, /'\/sso-callback': 'index\.html'/);
+    assert.match(auth, /window\.location\.pathname === CALLBACK_PATH/);
+  });
+
+  it('has no in-page hand-off left — no card, no intent bounce', () => {
+    // The page never has to rescue a stranded sign-in, so none of the old
+    // in-page escape hatches remain.
+    assert.doesNotMatch(app, /handOffToNativeApp/);
+    assert.doesNotMatch(app, /Continue in this browser instead/);
+    assert.doesNotMatch(auth, /intent:\/\//);
+    assert.doesNotMatch(auth, /sso-callback\/native/);
+  });
+});
+
+describe('native sign-in is used where the deployment supports it', () => {
   const auth = read('src/http/public/lib/auth.js');
   const plugin = read('android/app/src/main/java/com/hasino/app/GoogleAuthPlugin.java');
   const mainActivity = read('android/app/src/main/java/com/hasino/app/MainActivity.java');
@@ -127,48 +199,31 @@ describe('the app signs in natively, with no browser', () => {
   });
 
   it('exchanges the token with Clerk in the same WebView', () => {
-    // Native path: token -> authenticateWithGoogleOneTap -> session here. The
-    // client id is read from Clerk's own environment so there is one source of
-    // truth and no audience mismatch.
     assert.match(auth, /window\.Capacitor\?\.Plugins\?\.GoogleAuth/);
-    assert.match(auth, /if \(isNativeApp\(\)\) \{/);
     assert.match(auth, /plugin\.signIn\(\{ serverClientId \}\)/);
     assert.match(auth, /authenticateWithGoogleOneTap\(\{ token: idToken \}\)/);
     assert.match(auth, /handleGoogleOneTapCallback/);
-    // The client id comes from /api/config (GOOGLE_WEB_CLIENT_ID), which the
-    // server serves and the native token is minted for.
     assert.match(auth, /cfg\?\.googleClientId/);
     assert.match(read('src/http/server.ts'), /googleClientId: process\.env\['GOOGLE_WEB_CLIENT_ID'\]/);
   });
 
-  it('inside the app there is no path to the browser redirect at all', () => {
-    // The branch is on isNativeApp() alone. Gating it on the plugin as well —
-    // `if (isNativeApp() && nativeGoogleAuth())` — reads like defensiveness and
-    // is the opposite: a missing bridge then falls through to
-    // authenticateWithRedirect, which hands the sign-in to Chrome. Chrome
-    // cannot give it back; it signs the user in against its own cookie jar
-    // while the WebView still shows a sign-in button. So the app reports a
-    // missing bridge instead of routing around it.
-    const branch = /if \(isNativeApp\(\)\) \{[\s\S]*?\n  \}/.exec(auth)?.[0] ?? '';
-    assert.match(branch, /NO_NATIVE_BRIDGE/);
-    assert.match(branch, /return signInWithGoogleNative\(c, plugin\)/);
-    assert.doesNotMatch(branch, /authenticateWithRedirect/);
+  it('falls back to the browser round trip when it is not configured', () => {
+    // GOOGLE_WEB_CLIENT_ID is unset on a deployment that has not been given its
+    // own Google credentials, which is the ordinary case. Throwing there — as
+    // this once did — leaves the app with no way to sign in at all; the browser
+    // round trip is worse than native but it works, so it is what runs.
+    const branch = /if \(native\) \{[\s\S]*?\n  \}/.exec(auth)?.[0] ?? '';
+    assert.match(branch, /if \(plugin && serverClientId\)/);
+    assert.doesNotMatch(auth, /NOT_CONFIGURED/);
+    assert.doesNotMatch(auth, /NO_NATIVE_BRIDGE/);
   });
 
   it('handles cancellation without falling back to a browser', () => {
-    // A dismissed sheet is a quiet CANCELLED, and the native path never calls
-    // authenticateWithRedirect — so it cannot open Chrome.
+    // A dismissed sheet is a quiet CANCELLED. Retrying in a browser after the
+    // user closed the sheet on purpose would be its own bug.
     const native = /async function signInWithGoogleNative[\s\S]*?\n}/.exec(auth)?.[0] ?? '';
     assert.match(native, /code: 'CANCELLED'/);
     assert.doesNotMatch(native, /authenticateWithRedirect/);
-  });
-
-  it('leaves no browser hand-off machinery behind', () => {
-    // No Custom Tab, no scheme bounce, no in-page card, no app-specific path.
-    assert.doesNotMatch(app, /handOffToNativeApp/);
-    assert.doesNotMatch(auth, /intent:\/\//);
-    assert.doesNotMatch(auth, /NATIVE_CALLBACK_PATH/);
-    assert.doesNotMatch(read('src/http/server.ts'), /hasino:\/\/sso-callback/);
   });
 });
 
