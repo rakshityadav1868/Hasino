@@ -74,75 +74,97 @@ non-HTTPS one. A localhost default would produce an APK that works on the
 laptop that built it and nowhere else — and an emulator would make that look
 fine right up until you installed it on a phone.
 
-## Google sign-in, and the trip through the browser
+## Google sign-in stays inside the app
 
-Google refuses OAuth from embedded WebViews, so the Google step happens in the
-real browser. That part is not a bug and cannot be avoided — spoofing the
-WebView's user agent to hide from it breaks whenever Google changes detection,
-and is against their policy.
-
-What *was* a bug is where the browser put the result. Chrome landed on
-`https://<host>/sso-callback`, finished the handshake against Chrome's cookie
-jar, and left the user signed in **in Chrome** while the app still showed a
-sign-in button. A WebView has its own storage; the session cannot cross.
-
-Three pieces catch the return:
+Sign-in is **native**. Android's Credential Manager draws the Google account
+sheet over the WebView, hands back a signed Google ID token, and the web layer
+exchanges that token with Clerk in the same WebView. No browser opens, nothing
+navigates away, and there is no return trip to catch.
 
 | | |
 |---|---|
-| `AndroidManifest.xml` | an `autoVerify` App Links filter for `https://<host>/sso-callback` — and only that path, so ordinary links still open in the browser |
-| `MainActivity.java` | loads the incoming link into the WebView. Capacitor's own `onNewIntent` only notifies plugins; nothing navigates, so without this the app would foreground and silently drop the sign-in |
-| `GET /.well-known/assetlinks.json` | the site's half of the agreement — served by the app server from `ANDROID_CERT_FINGERPRINTS` |
+| `GoogleAuthPlugin.java` | asks Credential Manager for a Google ID token |
+| `MainActivity.java` | registers the plugin before the bridge starts, so the page can call it on first paint |
+| `signInWithGoogle()` in `lib/auth.js` | inside the app takes the native path and **only** the native path |
 
-The host in the manifest is a placeholder filled from
-`android/app/src/main/assets/capacitor.config.json` at build time, so it cannot
-drift from the URL the WebView actually loads.
+Inside the app there is deliberately no fallback to the browser redirect. Chrome
+cannot hand a session back: it signs the user in against its own cookie jar
+while the WebView, which has its own storage, still shows a sign-in button.
+That failure looks like success to the person holding the phone, so a missing
+bridge or a missing client id is reported as an error instead.
 
-### What you must configure
+### What you must configure — all four, or Android sign-in does not work
 
-Set these on the server, then rebuild and reinstall the APK:
+The APK is only one of the four. Three of these are console settings, and the
+app cannot supply them for you.
 
-```
-ANDROID_CERT_FINGERPRINTS=AA:BB:…   # SHA-256 of the signing cert, colon-separated
-ANDROID_PACKAGE=com.hasino.app      # optional; this is the default
-```
+**1. Google Cloud — two OAuth clients in the same project**
+   (APIs & Services → Credentials)
 
-Get the fingerprint from the APK you are actually installing — debug and
-release are signed with different certificates, and a release build needs its
-own entry added to the list:
+   - a **Web application** client. Its client id is the audience the token is
+     minted for, and the one Clerk verifies against.
+   - an **Android** client, for package `com.hasino.app` and the SHA-1 of the
+     certificate the APK you install was signed with. Credential Manager
+     refuses to issue a token without it.
 
-```bash
-$ANDROID_HOME/build-tools/36.0.0/apksigner verify --print-certs \
-  android/app/build/outputs/apk/debug/app-debug.apk
-```
+     ```bash
+     $ANDROID_HOME/build-tools/36.0.0/apksigner verify --print-certs \
+       android/app/build/outputs/apk/debug/app-debug.apk
+     ```
 
-Verify the site's half is live before installing:
+     Debug and release APKs have different certificates. Register both, or
+     register the one you are actually installing.
 
-```bash
-curl https://<host>/.well-known/assetlinks.json
-```
+**2. Clerk — your own Google credentials, not Clerk's shared ones**
+   (User & Authentication → Social Connections → Google → *Use custom
+   credentials*)
 
-Then, on the device, confirm Android verified the link:
+   Paste the **Web** client id and secret from step 1. This is the step that is
+   easy to skip and impossible to work around: a development instance using
+   Clerk's shared Google credentials has no client id of its own to check a
+   native token against, so `authenticateWithGoogleOneTap` is rejected however
+   correct the token is. You can confirm which state an instance is in:
+
+   ```bash
+   curl -s "https://<your-instance>.clerk.accounts.dev/v1/environment?__clerk_api_version=2025-04-10&_clerk_js_version=6.27.1&__clerk_db_jwt=$TOKEN" \
+     | jq .display_config.google_one_tap_client_id
+   ```
+
+   `null` means custom credentials are not set and native sign-in cannot work.
+
+**3. The server — `GOOGLE_WEB_CLIENT_ID`**
+
+   The same Web client id from step 1, set on the deployment (it is in
+   `render.yaml` as a `sync: false` key you type in the dashboard). The app
+   reads it from `GET /api/config`; unset, that reports `googleClientId: null`
+   and the app refuses to open a sheet that cannot succeed. Check it from
+   anywhere:
+
+   ```bash
+   curl -s https://<host>/api/config | jq .googleClientId
+   ```
+
+**4. The APK — rebuilt and reinstalled**
+
+   Sign-in went native in commit `731ebea`. Any APK built before that still
+   contains the old browser redirect, and no amount of server or Clerk
+   configuration changes what is already compiled into it. If sign-in leaves
+   for Chrome, this is the first thing to rule out.
+
+### The deep link that is still there
+
+`AndroidManifest.xml` still claims `https://<host>/sso-callback` as an App Link,
+and the server still serves `/.well-known/assetlinks.json` from
+`ANDROID_CERT_FINGERPRINTS`. The app's own sign-in no longer uses either. They
+are kept so a callback arriving from outside — an email link, a web sign-in on
+a device that has the app — lands in the app rather than the browser.
+
+If you keep them, the fingerprint has to be the SHA-256 of the APK you actually
+installed, or the link quietly opens in Chrome:
 
 ```bash
 adb shell pm get-app-links com.hasino.app     # want: verified
 ```
-
-`Domain verification state: verified` means the OAuth return comes back into
-the app. Anything else and it opens in Chrome — the old behaviour, which is a
-degraded sign-in rather than a broken app. Verification needs a network at
-install time; if it says `unverified`, reinstall once the site is reachable, or
-enable it by hand for testing with
-`adb shell pm set-app-links --package com.hasino.app 1 all`.
-
-### If sign-in fails with `disallowed_useragent`
-
-That is a different problem: Google refusing the WebView for the *first* leg
-rather than the return leg. The supported fix is native Google Sign-In — a
-Capacitor Google Auth plugin returns an ID token and Clerk accepts one through
-`authenticateWithGoogleOneTap({ token })`. That needs an Android OAuth client
-in Google Cloud registered against the app's SHA-1, and a branch in
-`views/login.js` for when the app runs natively. Not done pre-emptively.
 
 ## The admin panel on Android
 

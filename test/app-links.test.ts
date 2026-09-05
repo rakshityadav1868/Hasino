@@ -131,14 +131,28 @@ describe('the app signs in natively, with no browser', () => {
     // client id is read from Clerk's own environment so there is one source of
     // truth and no audience mismatch.
     assert.match(auth, /window\.Capacitor\?\.Plugins\?\.GoogleAuth/);
-    assert.match(auth, /if \(isNativeApp\(\) && nativeGoogleAuth\(\)\)/);
-    assert.match(auth, /nativeGoogleAuth\(\)\.signIn\(\{ serverClientId \}\)/);
+    assert.match(auth, /if \(isNativeApp\(\)\) \{/);
+    assert.match(auth, /plugin\.signIn\(\{ serverClientId \}\)/);
     assert.match(auth, /authenticateWithGoogleOneTap\(\{ token: idToken \}\)/);
     assert.match(auth, /handleGoogleOneTapCallback/);
     // The client id comes from /api/config (GOOGLE_WEB_CLIENT_ID), which the
     // server serves and the native token is minted for.
     assert.match(auth, /cfg\?\.googleClientId/);
     assert.match(read('src/http/server.ts'), /googleClientId: process\.env\['GOOGLE_WEB_CLIENT_ID'\]/);
+  });
+
+  it('inside the app there is no path to the browser redirect at all', () => {
+    // The branch is on isNativeApp() alone. Gating it on the plugin as well —
+    // `if (isNativeApp() && nativeGoogleAuth())` — reads like defensiveness and
+    // is the opposite: a missing bridge then falls through to
+    // authenticateWithRedirect, which hands the sign-in to Chrome. Chrome
+    // cannot give it back; it signs the user in against its own cookie jar
+    // while the WebView still shows a sign-in button. So the app reports a
+    // missing bridge instead of routing around it.
+    const branch = /if \(isNativeApp\(\)\) \{[\s\S]*?\n  \}/.exec(auth)?.[0] ?? '';
+    assert.match(branch, /NO_NATIVE_BRIDGE/);
+    assert.match(branch, /return signInWithGoogleNative\(c, plugin\)/);
+    assert.doesNotMatch(branch, /authenticateWithRedirect/);
   });
 
   it('handles cancellation without falling back to a browser', () => {

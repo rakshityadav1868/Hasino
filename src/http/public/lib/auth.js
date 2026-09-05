@@ -167,8 +167,20 @@ export function isRedirectCallback() {
 export async function signInWithGoogle() {
   const c = await ensureClerk();
 
-  if (isNativeApp() && nativeGoogleAuth()) {
-    return signInWithGoogleNative(c);
+  if (isNativeApp()) {
+    // Inside the app the native path is the only path. Falling through to the
+    // redirect below would hand the sign-in to Chrome, and Chrome cannot give
+    // it back: the session it creates lives in its own cookie jar while this
+    // WebView, which has its own storage, still shows a sign-in button. So a
+    // missing bridge is reported, not routed around.
+    const plugin = nativeGoogleAuth();
+    if (!plugin) {
+      throw Object.assign(
+        new Error('Sign-in is unavailable in this version of the app. Please update it.'),
+        { code: 'NO_NATIVE_BRIDGE' },
+      );
+    }
+    return signInWithGoogleNative(c, plugin);
   }
 
   try {
@@ -196,7 +208,7 @@ export async function signInWithGoogle() {
  * activates the session and routes home, the same finish as the web callback —
  * so watchAuthState() in app.js sees the new session and the app routes by role.
  */
-async function signInWithGoogleNative(c) {
+async function signInWithGoogleNative(c, plugin) {
   // The Google *Web* OAuth client id the token must be minted for, so Clerk —
   // configured with the same id — will accept it. Served from /api/config
   // (GOOGLE_WEB_CLIENT_ID); it is public, the same id set as Clerk's Google
@@ -211,7 +223,7 @@ async function signInWithGoogleNative(c) {
 
   let idToken;
   try {
-    const res = await nativeGoogleAuth().signIn({ serverClientId });
+    const res = await plugin.signIn({ serverClientId });
     idToken = res?.idToken;
   } catch (err) {
     // Credential Manager rejects here when the user backs out of the sheet, and

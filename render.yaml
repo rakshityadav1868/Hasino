@@ -102,6 +102,23 @@ services:
         sync: false
       - key: ADMIN_EMAILS
         sync: false
+      # Native Google sign-in in the Android app.
+      #
+      # The Google *Web* OAuth client id, served publicly from GET /api/config.
+      # The app asks Android's Credential Manager for an ID token minted for
+      # this audience and hands it to Clerk, which verifies it against the same
+      # id — so the sign-in happens inside the app and never leaves for a
+      # browser. Unset, /api/config reports googleClientId: null, the app
+      # refuses to open a sheet that cannot succeed, and Android sign-in is
+      # dead. That is not hypothetical: this key was missing from the blueprint,
+      # so nobody deploying from it knew to set it, and nobody did.
+      #
+      # It must be the SAME Web client id configured as Clerk's Google
+      # credentials, and Clerk must be using your own Google credentials rather
+      # than its shared development ones — with the shared ones Clerk has no
+      # client id to verify against and rejects the token. See README-ANDROID.md.
+      - key: GOOGLE_WEB_CLIENT_ID
+        sync: false
       # Android App Links. Without these two the server 404s
       # /.well-known/assetlinks.json, Android cannot verify that this site and
       # the Hasino app are the same publisher, and the OAuth return therefore
