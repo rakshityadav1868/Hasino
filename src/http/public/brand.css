@@ -218,7 +218,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, var(--brand-100), var(--brand-050));
+  background: var(--brand-100);
   color: var(--brand-ink);
   font-weight: 800;
   font-size: var(--text-2xl);
@@ -285,34 +285,70 @@ body {
      viewport-fit=cover, so without this the location chip sits under the
      clock. env() is 0px in a desktop browser, which is why this is one rule
      rather than a media query. */
-  padding: calc(var(--space-3) + env(safe-area-inset-top)) clamp(var(--space-4), 4vw, var(--space-10)) var(--space-3);
-  /* Translucent and blurred rather than a flat panel: content scrolling under
-     the header reads as depth instead of as the header being a separate slab.
-     The colour-mix fallback keeps it opaque where backdrop-filter is not
-     supported, so it never becomes unreadable. */
-  background: color-mix(in srgb, var(--surface) 82%, transparent);
-  backdrop-filter: saturate(180%) blur(16px);
-  border-bottom: 1px solid var(--line);
+  padding: calc(var(--space-4) + env(safe-area-inset-top)) clamp(var(--space-4), 4vw, var(--space-10)) var(--space-4);
+  /* A filled brand band with a rounded bottom edge, and the page starting
+     under it. It replaces a translucent white strip that read as an absence:
+     the header is the one piece of chrome on every screen of all three
+     surfaces, so it is what makes them look like one product.
+
+     Flat colour and a radius, not a gradient and not a blur — the shape
+     carries it, and a blurred bar over a photograph is a bar you cannot
+     read. */
+  background: var(--brand-600);
+  color: var(--on-brand);
+  border-radius: 0 0 var(--radius-xl) var(--radius-xl);
   position: sticky;
   top: 0;
   z-index: 20;
   flex-wrap: wrap;
 }
-@supports not (backdrop-filter: blur(1px)) {
-  .topbar { background: var(--surface); }
-}
+/* On the band the lockup is the wordmark alone — a purple chip on a purple
+   field is a rectangle nobody can see. */
+.topbar .lockup { background: none; padding: 0; color: var(--on-brand); }
+.topbar .lockup .wordmark .i::after { background: var(--on-brand); }
 .topbar nav { display: flex; gap: 4px; margin-left: 6px; }
 .topbar nav a {
   padding: 8px 14px;
   border-radius: var(--radius-pill);
   text-decoration: none;
-  color: var(--dim);
+  color: color-mix(in srgb, var(--on-brand) 78%, transparent);
   font-weight: var(--weight-semibold);
   font-size: var(--text-sm);
   transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
-.topbar nav a:hover { background: var(--surface-2); color: var(--text); }
-.topbar nav a[aria-current="page"] { background: var(--brand-100); color: var(--brand-ink); }
+.topbar nav a:hover { background: color-mix(in srgb, #ffffff 14%, transparent); color: var(--on-brand); }
+.topbar nav a[aria-current="page"] { background: color-mix(in srgb, #ffffff 20%, transparent); color: var(--on-brand); }
+
+/* Everything else on the band needs the band's palette: a bordered control on
+   a filled background is a rectangle you cannot see. One translucent white
+   fill serves the location chip, the account trigger and any button, in both
+   themes, without a second set of colours. */
+.topbar .location-chip,
+.topbar .account-trigger {
+  border: 0;
+  background: color-mix(in srgb, #ffffff 16%, transparent);
+  color: var(--on-brand);
+}
+/* The chip was bare text, which on a filled band reads as a label rather than
+   as the control it is. A thumb-sized target, and the city inherits the band's
+   colour instead of the page's ink. */
+.topbar .location-chip {
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: var(--radius-pill);
+  max-width: 22ch;
+  min-width: 0;      /* so a long place name shrinks the chip, not the bar */
+  overflow: hidden;
+  white-space: nowrap;
+}
+.topbar .location-chip b { color: inherit; overflow: hidden; text-overflow: ellipsis; }
+.topbar .location-chip:hover,
+.topbar .account-trigger:hover { background: color-mix(in srgb, #ffffff 26%, transparent); }
+
+.topbar .btn { border-color: transparent; background: color-mix(in srgb, #ffffff 16%, transparent); color: var(--on-brand); }
+.topbar .btn:hover { border-color: transparent; background: color-mix(in srgb, #ffffff 26%, transparent); color: var(--on-brand); }
+.topbar .btn.primary { background: var(--surface); color: var(--brand-ink); }
+.topbar .btn.primary:hover { background: var(--surface); color: var(--brand-700); }
 .spacer { flex: 1; }
 
 /* ---------- the account menu, top right ----------
@@ -408,7 +444,10 @@ body {
   /* Gutters scale with the viewport instead of sitting at 22px from phone to
      desktop — the main reason the desktop layout felt cramped against the
      window edge. */
-  padding: var(--space-8) clamp(var(--space-4), 4vw, var(--space-10)) 0;
+  /* The header is a filled band with a rounded bottom edge, so the page
+     starts close under it — a 32px gap there read as the header floating
+     loose above the content. */
+  padding: var(--space-5) clamp(var(--space-4), 4vw, var(--space-10)) 0;
   padding-bottom: calc(var(--space-12) + var(--bottom-nav-height) + var(--safe-bottom) + var(--cart-bar-height));
 }
 
@@ -538,6 +577,9 @@ h3 {
   background: var(--surface);
   color: var(--text);
   white-space: nowrap;
+  /* Some of these are anchors — the salon panel's sign-in, the way back to the
+     customer app — and an underlined button reads as a link wearing a button. */
+  text-decoration: none;
   transition: background var(--dur-fast) var(--ease-out),
               border-color var(--dur-fast) var(--ease-out),
               color var(--dur-fast) var(--ease-out),
@@ -549,14 +591,22 @@ h3 {
 .btn:disabled, .btn[aria-disabled="true"] { opacity: .45; cursor: not-allowed; transform: none; }
 .btn:disabled:hover { border-color: var(--line); color: var(--text); background: var(--surface); }
 
+/* The deeper of the two brand purples, not the light one. --brand is the logo
+   field — a tint — and at button size it reads as a disabled control rather
+   than as the thing to press. Same palette, the weight it was always meant to
+   have. */
 .btn.primary {
-  background: var(--brand);
-  border-color: var(--brand);
+  background: var(--brand-600);
+  border-color: var(--brand-600);
   color: var(--on-brand);
   box-shadow: 0 1px 2px rgba(16,14,35,.12);
 }
-.btn.primary:hover { background: var(--brand-600); border-color: var(--brand-600); color: var(--on-brand); }
-.btn.primary:disabled:hover { background: var(--brand); border-color: var(--brand); }
+.btn.primary:hover { background: var(--brand-700); border-color: var(--brand-700); color: var(--on-brand); }
+.btn.primary:disabled:hover { background: var(--brand-600); border-color: var(--brand-600); }
+
+/* A full-width button is the one action on the screen, and at that width a
+   10px corner reads as a slab. */
+.btn.block { border-radius: var(--radius-pill); padding-block: 15px; font-size: var(--text-base); }
 
 /* Secondary: brand-tinted, for the second-most-wanted action in a group where
    two outlined buttons would read as equal weight. */
@@ -877,16 +927,13 @@ td input, td select { min-width: 72px; }
   /* Clears the gesture bar, for the same reason as the top bar above. */
   padding-bottom: env(safe-area-inset-bottom);
   box-sizing: content-box;
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
-  backdrop-filter: saturate(180%) blur(16px);
+  /* Flat and opaque rather than blurred: it sits over photographs, and a
+     translucent bar over a photograph is a bar you cannot read. */
+  background: var(--surface);
   border-top: 1px solid var(--line);
   z-index: 100;
   justify-content: space-around;
   align-items: center;
-  box-shadow: 0 -4px 16px rgba(0,0,0,0.06);
-}
-@supports not (backdrop-filter: blur(1px)) {
-  .bottom-nav { background: var(--surface); }
 }
 @media (max-width: 768px) {
   .bottom-nav { display: flex; }
@@ -906,29 +953,21 @@ td input, td select { min-width: 72px; }
   color: var(--dim);
   font-size: 11px;
   font-weight: var(--weight-semibold);
-  gap: 3px;
+  gap: 4px;
   flex: 1;
   height: 100%;
   position: relative;
   transition: color var(--dur-fast) var(--ease-out);
 }
-/* The icon lifts a little on the active tab, which is what makes the bar feel
-   responsive on a phone where there is no hover to rely on. */
-.bottom-nav .nav-item svg { transition: transform var(--dur-base) var(--ease-spring); }
-.bottom-nav .nav-item.active svg { transform: translateY(-2px) scale(1.06); }
-.bottom-nav .nav-item.active::before {
-  content: "";
-  position: absolute;
-  top: 0; left: 50%; transform: translateX(-50%);
-  width: 26px; height: 3px;
-  border-radius: 0 0 var(--radius-pill) var(--radius-pill);
-  background: var(--brand);
-}
+/* Line icons from lib/icons.js, which stroke rather than fill — the bar was
+   the one place in the app whose marks were a different weight from every
+   other mark in it. */
 .bottom-nav .nav-item svg {
-  width: 22px;
-  height: 22px;
-  fill: currentColor;
+  width: 23px;
+  height: 23px;
+  margin: 0;
 }
+.bottom-nav .nav-item.active svg { color: var(--brand-600); }
 .bottom-nav .nav-item.active,
 .bottom-nav .nav-item:hover {
   color: var(--brand-ink);
@@ -970,10 +1009,10 @@ td input, td select { min-width: 72px; }
   border-radius: var(--radius-lg);
   overflow: hidden;
   aspect-ratio: 4 / 3;
-  /* The gradient is the fallback the photo sits on: if the image is slow,
-     blocked or 404s (onerror adds .hero-media-fallback), this is what shows —
-     a deliberate brand panel, not a broken frame. */
-  background: linear-gradient(140deg, var(--brand-700) 0%, var(--brand) 70%, var(--brand-600) 100%);
+  /* The flat brand colour is the fallback the photo sits on: if the image is
+     slow, blocked or 404s (onerror adds .hero-media-fallback), this is what
+     shows — a deliberate brand panel, not a broken frame. */
+  background: var(--brand-600);
   box-shadow: var(--elevation-2);
 }
 .hero-img {
@@ -1043,35 +1082,34 @@ td input, td select { min-width: 72px; }
   border-radius: var(--radius-lg);
   overflow: hidden;
   margin-bottom: var(--section-gap);
-  min-height: 320px;
-  display: flex;
-  align-items: center;
-  background: linear-gradient(135deg, var(--brand-700), var(--ink));
-  box-shadow: var(--elevation-2);
+  min-height: 300px;
+  /* A split rather than an overlay: the copy sits on flat brand colour and the
+     photograph keeps its own half, with a hard edge between them. That is what
+     replaces the left-weighted scrim this band used to need — a scrim is a
+     gradient whose only job is to make white text survive a photograph, and
+     the type is more legible when it is simply not on one. */
+  display: grid;
+  grid-template-columns: 1fr 42%;
+  align-items: stretch;
+  background: var(--brand-600);
 }
 .adband-img {
-  position: absolute;
-  inset: 0;
+  grid-column: 2;
+  grid-row: 1;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transition: transform var(--dur-slow) var(--ease-out);
+  display: block;
+  background: var(--brand-700);
 }
+/* Nothing behind it but brand colour, so a failed image leaves a clean block
+   of it rather than a broken frame. */
 .adband-fallback .adband-img { display: none; }
-/* A left-weighted scrim so the copy stays readable over any photograph without
-   dimming the whole image into mud. */
-.adband::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(90deg, rgba(11,11,16,.82) 0%, rgba(11,11,16,.55) 45%, rgba(11,11,16,.15) 100%);
-  pointer-events: none;
-}
-.adband:hover .adband-img { transform: scale(1.03); }
 .adband-inner {
-  position: relative;
-  z-index: 1;
-  padding: clamp(var(--space-8), 5vw, var(--space-12));
+  grid-column: 1;
+  grid-row: 1;
+  justify-content: center;
+  padding: clamp(var(--space-6), 4vw, var(--space-10));
   max-width: 34rem;
   display: flex;
   flex-direction: column;
@@ -1093,6 +1131,19 @@ td input, td select { min-width: 72px; }
   line-height: var(--leading-tight);
   letter-spacing: var(--tracking-tight);
   color: var(--on-brand);
+}
+/* The action sits on brand colour, so it inverts — a brand-purple button on a
+   brand-purple panel is a rectangle you cannot see. Same rule as the app bar's
+   and the panel header's, for the same reason. */
+.adband-inner .btn.primary {
+  background: var(--surface);
+  border-color: var(--surface);
+  color: var(--brand-ink);
+}
+.adband-inner .btn.primary:hover {
+  background: var(--surface);
+  border-color: var(--surface);
+  color: var(--brand-700);
 }
 .adband-sub {
   margin: 0 0 var(--space-2);
@@ -1116,7 +1167,7 @@ td input, td select { min-width: 72px; }
 .promo-media {
   position: relative;
   min-height: 260px;
-  background: linear-gradient(140deg, var(--brand-700), var(--brand));
+  background: var(--brand-600);
 }
 .promo-img {
   position: absolute;
@@ -1154,23 +1205,22 @@ td input, td select { min-width: 72px; }
 @media (max-width: 820px) {
   .promo { grid-template-columns: 1fr; }
   .promo-media { order: -1; min-height: 200px; }
-  .adband { min-height: 280px; }
-  .adband::after {
-    /* A near-full scrim reads better than a side gradient once the copy sits
-       over the middle of a narrow image. */
-    background: linear-gradient(180deg, rgba(11,11,16,.35) 0%, rgba(11,11,16,.78) 100%);
-  }
-  .adband-inner { max-width: none; }
+  /* Stacked, like the promo band above it: photograph first, then the copy on
+     its own block of colour. */
+  .adband { grid-template-columns: 1fr; min-height: 0; }
+  .adband-img { grid-column: 1; grid-row: 1; min-height: 200px; }
+  .adband-inner { grid-row: 2; max-width: none; }
 }
 .search-bar-wrap {
   display: flex;
   gap: var(--space-2);
   align-items: center;
   background: var(--surface);
-  padding: var(--space-2);
+  padding: var(--space-1);
+  padding-left: var(--space-2);
   border-radius: var(--radius-pill);
   border: 1px solid var(--line);
-  box-shadow: var(--elevation-2);
+  box-shadow: var(--elevation-1);
   max-width: 640px;
   transition: box-shadow var(--dur-base) var(--ease-out),
               border-color var(--dur-base) var(--ease-out);
@@ -1187,7 +1237,8 @@ td input, td select { min-width: 72px; }
   box-shadow: none;
   background: transparent;
   font-size: var(--text-base);
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-4);
+  min-width: 0;   /* an input's default width otherwise pushes the row wider */
 }
 .search-bar-wrap input:focus { border: none; box-shadow: none; }
 .search-bar-wrap .btn { border-radius: var(--radius-pill); padding-inline: var(--space-6); }
@@ -1201,7 +1252,7 @@ td input, td select { min-width: 72px; }
 }
 .category-strip {
   display: flex;
-  gap: var(--space-3);
+  gap: var(--space-2);
   overflow-x: auto;
   padding-bottom: var(--space-3);
   margin-bottom: var(--section-gap);
@@ -1214,15 +1265,18 @@ td input, td select { min-width: 72px; }
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 16px;
+  padding: 10px 18px;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 99px;
+  border-radius: var(--radius-pill);
   cursor: pointer;
-  font-weight: 600;
-  font-size: 14px;
+  font-weight: var(--weight-semibold);
+  font-size: var(--text-sm);
   color: var(--text);
-  transition: all 0.15s ease;
+  white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out),
+              color var(--dur-fast) var(--ease-out);
   user-select: none;
 }
 /* Hover and selected used to render identically, so on a pointer device every
@@ -1233,11 +1287,12 @@ td input, td select { min-width: 72px; }
   border-color: var(--brand);
   color: var(--text);
 }
+/* The filled state is the selection, so it is the deeper purple and it drops
+   the coloured glow the light one needed to look filled at all. */
 .category-card.active {
-  background: var(--brand);
+  background: var(--brand-600);
   color: var(--on-brand);
-  border-color: var(--brand);
-  box-shadow: 0 4px 14px -4px color-mix(in srgb, var(--brand) 60%, transparent);
+  border-color: var(--brand-600);
 }
 .category-icon {
   font-size: 18px;
@@ -1379,22 +1434,20 @@ td input, td select { min-width: 72px; }
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
-  overflow: hidden;
+  /* The photograph is inset inside the card rather than run to its edge. The
+     inset is what stops a grid of these reading as a contact sheet. */
+  padding: var(--space-3);
   text-decoration: none;
   color: inherit;
-  box-shadow: var(--elevation-1);
-  transition: transform var(--dur-base) var(--ease-out),
-              box-shadow var(--dur-base) var(--ease-out),
+  transition: box-shadow var(--dur-base) var(--ease-out),
               border-color var(--dur-base) var(--ease-out);
   cursor: pointer;
   height: 100%;
 }
 .salon-card:hover {
-  transform: translateY(-4px);
-  box-shadow: var(--elevation-3);
+  box-shadow: var(--elevation-2);
   border-color: color-mix(in srgb, var(--brand) 55%, var(--line));
 }
-.salon-card:active { transform: translateY(-1px); }
 .salon-card-img-wrap {
   position: relative;
   width: 100%;
@@ -1402,23 +1455,15 @@ td input, td select { min-width: 72px; }
      column widens instead of getting letterboxed on a wide screen. */
   aspect-ratio: var(--aspect-card);
   background: var(--surface-2);
+  border-radius: var(--radius);
   overflow: hidden;
-}
-/* A scrim under the top badges so white text on a light photograph stays
-   readable — the badges were legible only against dark images. */
-.salon-card-img-wrap::after {
-  content: "";
-  position: absolute; inset: 0 0 55% 0;
-  background: linear-gradient(to bottom, rgba(11,11,16,.38), transparent);
-  pointer-events: none;
 }
 .salon-card-img {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transition: transform var(--dur-slow) var(--ease-out);
+  display: block;
 }
-.salon-card:hover .salon-card-img { transform: scale(1.05); }
 /* A positioning slot only. The status pill inside carries its own colour, so
    the old dark chip was a second background wrapped around a badge that
    already had one. */
@@ -1428,16 +1473,17 @@ td input, td select { min-width: 72px; }
   top: var(--space-3);
   left: var(--space-3);
 }
-/* Frosted, because this sits over a photograph of unknown brightness. */
+/* Solid, because this sits over a photograph of unknown brightness — a
+   frosted pill over a dark one is a grey smudge, and it was the reason the
+   photo needed a scrim gradient over its top half. */
 .salon-badge-top .pill {
-  backdrop-filter: blur(10px);
-  background: color-mix(in srgb, var(--surface) 82%, transparent);
-  border-color: color-mix(in srgb, var(--line) 70%, transparent);
-  box-shadow: 0 2px 8px rgba(16,14,35,.18);
+  background: var(--surface);
+  border-color: transparent;
+  box-shadow: var(--elevation-1);
   font-weight: var(--weight-bold);
 }
 .salon-card-body {
-  padding: var(--space-5);
+  padding: var(--space-4) var(--space-2) var(--space-1);
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -1451,23 +1497,25 @@ td input, td select { min-width: 72px; }
   margin-bottom: 4px;
 }
 .salon-card-title {
-  font-size: var(--text-lg);
+  font-size: var(--text-base);
   font-weight: var(--weight-bold);
   margin: 0;
   letter-spacing: var(--tracking-snug);
   color: var(--text);
   line-height: var(--leading-snug);
 }
+/* The rating rides in a brand pill rather than a green one: a score is not a
+   status, and green beside the open/closed pill read as a second one. */
 .salon-card-rating {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  background: var(--ok-bg);
-  color: var(--ok);
+  background: var(--brand-600);
+  color: var(--on-brand);
   font-weight: var(--weight-bold);
   font-size: var(--text-xs);
-  padding: 4px 9px;
-  border-radius: var(--radius-xs);
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
   flex: 0 0 auto;
   font-variant-numeric: tabular-nums;
 }
@@ -1488,7 +1536,6 @@ td input, td select { min-width: 72px; }
 .salon-card-footer {
   margin-top: auto;
   padding-top: var(--space-4);
-  border-top: 1px solid var(--line);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -1920,14 +1967,15 @@ td input, td select { min-width: 72px; }
   transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .side-link:hover { background: var(--surface-2); color: var(--text); }
-.side-link .side-icon { width: 18px; text-align: center; flex: 0 0 auto; font-size: 15px; }
+.side-link .side-icon { width: 18px; height: 18px; flex: 0 0 auto; opacity: .85; }
+.side-link[aria-current="page"] .side-icon { opacity: 1; }
 .side-link[aria-current="page"] { background: var(--brand-100); color: var(--brand-ink); }
 .side-link .side-count {
   margin-left: auto; font-size: 11px; font-weight: var(--weight-bold);
   background: var(--brand); color: var(--on-brand);
   border-radius: var(--radius-pill); padding: 1px 7px;
 }
-.shell-main { min-width: 0; padding: clamp(var(--space-5), 3vw, var(--space-8)); }
+.shell-main { --panel-pad: clamp(var(--space-5), 3vw, var(--space-8)); min-width: 0; padding: var(--panel-pad); }
 
 /* Phone: the sidebar becomes a scrolling row pinned under the header. */
 @media (max-width: 860px) {
@@ -2346,10 +2394,11 @@ td input, td select { min-width: 72px; }
   width: 38px;
   height: 38px;
   padding: 0;
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
-  backdrop-filter: blur(8px);
+  /* Solid, not frosted: it sits on a photograph of unknown brightness, and a
+     translucent disc over a dark one is a grey smudge. */
+  background: var(--surface);
   cursor: pointer;
   box-shadow: var(--elevation-1);
   transition: transform var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
@@ -2371,7 +2420,6 @@ td input, td select { min-width: 72px; }
   transition: fill var(--dur-base) var(--ease-out), stroke var(--dur-base) var(--ease-out);
 }
 .heart-btn.is-saved svg path { fill: #e2364d; stroke: #e2364d; }
-.heart-btn.is-saved { border-color: color-mix(in srgb, #e2364d 35%, var(--line)); }
 
 /* The pop on save. Deliberately small and fast — a save is a confirmation,
    not an event. */
@@ -2488,21 +2536,36 @@ td input, td select { min-width: 72px; }
 .cropper-hint { margin-top: var(--space-2); }
 
 /* ---------- the salon panel's dashboard header ---------- */
+/* The band across the top of the salon panel's main column — the same shape,
+   colour and rounded bottom edge the customer app's header has, so the two
+   surfaces read as one product. It bleeds to the edges of the column by
+   cancelling the column's own padding, which is why that padding is a variable
+   rather than a value written twice. */
 .panel-header {
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  margin-bottom: var(--space-6);
-  padding-bottom: var(--space-4);
-  border-bottom: 1px solid var(--line);
+  margin: calc(var(--panel-pad) * -1) calc(var(--panel-pad) * -1) var(--space-6);
+  padding: var(--space-5) var(--panel-pad);
+  background: var(--brand-600);
+  color: var(--on-brand);
+  border-radius: 0 0 var(--radius-xl) var(--radius-xl);
 }
+/* Controls in the band need the band's palette, exactly as in the app bar. */
+.panel-header .btn { border-color: transparent; background: color-mix(in srgb, #ffffff 16%, transparent); color: var(--on-brand); }
+.panel-header .btn:hover { border-color: transparent; background: color-mix(in srgb, #ffffff 26%, transparent); color: var(--on-brand); }
+.panel-header .btn.primary { background: var(--surface); color: var(--brand-ink); }
+.panel-header .btn.primary:hover { background: var(--surface); color: var(--brand-700); }
+.panel-header .meta { color: color-mix(in srgb, var(--on-brand) 82%, transparent); }
+.panel-header .account-trigger { border-color: transparent; background: color-mix(in srgb, #ffffff 16%, transparent); color: var(--on-brand); }
+.panel-header .account-trigger:hover { background: color-mix(in srgb, #ffffff 26%, transparent); }
 .panel-header-titles { min-width: 0; }
 .panel-header-eyebrow {
   font-size: var(--text-xs);
   font-weight: var(--weight-semibold);
   letter-spacing: var(--tracking-wide);
   text-transform: uppercase;
-  color: var(--dim);
+  color: color-mix(in srgb, var(--on-brand) 72%, transparent);
 }
 .panel-header-title {
   font-size: var(--text-2xl);

@@ -54,6 +54,10 @@ const PATHS = {
   heart: '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z"/>',
   // back
   'chevron-left': '<polyline points="15 18 9 12 15 6"/>',
+  // the bottom bar's first and last tabs. Its middle two are `search` and
+  // `calendar`, which the set already had.
+  home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.4V20a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1V9.4"/>',
+  user: '<circle cx="12" cy="8" r="3.6"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/>',
 };
 
 /** Icon names known to the set — lets callers fall back to text for anything else. */
