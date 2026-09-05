@@ -99,6 +99,34 @@
         </provider>
     </application>
 
+    <!--
+      Package visibility, for finding a browser that speaks Custom Tabs.
+
+      Android 11 and later hide every other installed package from an app
+      unless it declares what it needs to see. Without this,
+      CustomTabsClient.getPackageName() queries for a Custom Tabs service and
+      is told there are none, returns null, and the launch falls back to a bare
+      ACTION_VIEW — which on a device with no default browser is answered by
+      the "Open with" chooser, mid sign-in, offering browsers with no way for
+      the user to know which one keeps the flow working. Observed exactly that
+      on Android 15. A plain browser picked there is not a Custom Tab at all,
+      so the return leg loses the property the whole flow depends on.
+
+      Two entries because they answer two different questions: the service
+      intent finds browsers that implement Custom Tabs, and the http intent
+      makes ordinary browsers resolvable for the ActivityNotFoundException
+      fallback in OAuthTabWebViewClient.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.support.customtabs.action.CustomTabsService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+    </queries>
+
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />

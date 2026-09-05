@@ -142,6 +142,26 @@ describe('the app sign-in leaves for a tab and comes back to the app', () => {
     assert.match(tabClient, /return super\.shouldOverrideUrlLoading/);
   });
 
+  it('names the browser, so no "Open with" chooser interrupts the sign-in', () => {
+    // A bare ACTION_VIEW is answered by the resolver on a device with no
+    // default browser — seen mid sign-in on Android 15, offering Chrome and the
+    // system browser with no way to tell which keeps the flow intact. A plain
+    // browser chosen there is not a Custom Tab, so the return leg loses the one
+    // property this client exists to get.
+    assert.match(tabClient, /CustomTabsClient\.getPackageName\(context, null\)/);
+    assert.match(tabClient, /tabs\.intent\.setPackage\(pkg\)/);
+    // getPackageName() starts from the default browser, so it returns null on a
+    // phone that has none set — even with two providers installed, which is
+    // what the test device had. The direct query is the one that answers.
+    assert.match(tabClient, /queryIntentServices/);
+    assert.match(tabClient, /anyCustomTabsProvider/);
+    // Android 11+ hides every other package unless the app declares what it
+    // needs to see; without this the query above matches nothing at all.
+    const manifest = read('android/app/src/main/AndroidManifest.xml');
+    assert.match(manifest, /<queries>/);
+    assert.match(manifest, /android\.support\.customtabs\.action\.CustomTabsService/);
+  });
+
   it('is installed on the WebView at startup', () => {
     assert.match(mainActivity, /setWebViewClient\(new OAuthTabWebViewClient\(getBridge\(\)\)\)/);
     assert.match(buildGradle, /androidx\.browser:browser/);
