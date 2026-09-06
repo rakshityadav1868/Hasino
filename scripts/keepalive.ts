@@ -11,15 +11,22 @@
  * which is asleep exactly when the ping is needed. Something outside has to
  * make the request.
  *
- * In this deployment that something is cron-job.org, which fetches a URL on a
- * schedule from its own servers. Note what that means: it does not run this
- * file. It calls /healthz directly, which is the entire job, so with
- * cron-job.org configured there is nothing for a CI platform to do — a second
- * scheduler would be a second thing to maintain that changes no outcome.
+ * In this deployment that something is a launchd agent on a machine we own,
+ * installed by scripts/install-keepalive-cron.sh. It runs
+ * scripts/keepalive-cron.sh every ten minutes, which resolves an interpreter
+ * (launchd inherits a PATH with no nvm on it), holds the instance-hour window,
+ * logs the result, and then runs THIS file for the request itself.
  *
- * So this script is not the keepalive in production. It is the same request in
- * a form you can run by hand, point a different scheduler at if cron-job.org
- * ever lapses, or use as the verification below.
+ * It used to be cron-job.org. That was replaced because the schedule lived in
+ * somebody else's dashboard, where it reported green while production was
+ * still cold-starting on every visit — and because a third-party account is a
+ * dependency nobody in this repo can inspect, fix, or test. A local scheduler
+ * trades round-the-clock coverage for that: pings stop when the machine is
+ * off, and the service simply sleeps until it is back.
+ *
+ * So this file is the request, not the schedule. It is equally runnable by
+ * hand, pointable at a different scheduler, and usable as the verification
+ * below.
  *
  * VERIFYING, WHICH IS THE PART THAT ACTUALLY MATTERS
  * -------------------------------------------------

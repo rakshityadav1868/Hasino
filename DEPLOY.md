@@ -246,8 +246,8 @@ HTTP traffic**, and the next visitor pays for the wake. Measured on this
 deployment: **13.5s**. Render documents up to a minute. That loading page is
 the platform, not the app.
 
-The fix is inbound HTTP on a clock, from outside. **cron-job.org** does it —
-free, no card, one-minute resolution — fetching:
+The fix is inbound HTTP on a clock, from outside. That clock is **a launchd
+agent on a machine we own** — no third-party account in the path — fetching:
 
 ```
 https://hasino.onrender.com/healthz     every 10 minutes
@@ -256,14 +256,49 @@ https://hasino.onrender.com/healthz     every 10 minutes
 `/healthz` is the right target: it answers without touching Postgres, so it
 wakes the process without loading the database every few minutes.
 
-Nothing in this repo schedules that, and nothing should. cron-job.org fetches
-the URL from its own servers; it does not run our code, so the request *is* the
-whole job. A CI workflow doing the same thing on its own clock would be a
-second scheduler to maintain that changes no outcome.
+### Installing it
+
+```
+bash scripts/install-keepalive-cron.sh              # install and start
+bash scripts/install-keepalive-cron.sh --status     # loaded? working?
+bash scripts/install-keepalive-cron.sh --uninstall
+```
+
+On macOS that writes `~/Library/LaunchAgents/com.hasino.keepalive.plist`, which
+launchd starts at login, restarts after a reboot, and — the part crontab cannot
+do — fires as soon as the machine wakes if it slept through a slot. On anything
+else the installer prints the crontab line to add instead:
+
+```
+*/10 * * * * /bin/bash /path/to/Hasino/scripts/keepalive-cron.sh
+```
+
+Either way the thing being scheduled is `scripts/keepalive-cron.sh`, a wrapper
+that exists for three reasons the scheduler cannot handle itself: launchd and
+cron inherit a bare `PATH` with no nvm or Homebrew on it, so it resolves `node`
+by absolute path; the instance-hour window below is one readable `if` there
+instead of ~108 calendar entries in a plist; and every run appends to
+`~/Library/Logs/hasino-keepalive.log`, so "is it working" is answered by a file
+rather than by somebody else's dashboard.
+
+Per-machine settings go in `~/.hasino-keepalive.env`, which is read if present
+and is never in git — `KEEPALIVE_URL`, `KEEPALIVE_NODE`, `KEEPALIVE_LOG`,
+`KEEPALIVE_START_HOUR_UTC`, `KEEPALIVE_END_HOUR_UTC`.
+
+### What the local scheduler costs
+
+The pings come from that machine, so they stop when it is off, asleep, or off
+the network. The service then sleeps and the next visitor waits through a cold
+start — exactly the behaviour from before any keepalive existed. Nothing
+breaks; it is just slow again until the machine is back. That is the whole
+trade for keeping the pinger on hardware we control, and for a pilot it is the
+right side of it. When it stops being, the answer is a always-on box or a paid
+Render instance, not another free account with its own dashboard to trust.
 
 ### Restrict it to 00:00-18:00 UTC
 
-**This part is not optional, and cron-job.org does not do it by default.**
+**This part is not optional.** It is the default in `keepalive-cron.sh`, and it
+is the reason the window is enforced in the script rather than in the schedule.
 
 Render gives a **workspace** 750 free instance-hours per calendar month, shared
 across every free service, and a sleeping service consumes none. A 31-day month
@@ -275,21 +310,22 @@ is 744 hours:
 | 18h/day, one service | ~564 | ~186 hours spare for the admin panel and overnight traffic |
 | 18h/day, both services | ~1128 | Everything goes dark around the 16th |
 
-So in the cron-job.org job's schedule, select **hours 0-17 UTC** and leave the
-rest unchecked. That is **05:30-23:30 IST**, which covers every plausible
-booking hour. A visitor at 3am still waits for a cold start; that is the price
-of staying inside the budget, and it is cheaper than the whole workspace going
-dark mid-month.
+Hours 0-17 UTC is **05:30-23:30 IST**, which covers every plausible booking
+hour. A visitor at 3am still waits for a cold start; that is the price of
+staying inside the budget, and it is cheaper than the whole workspace going
+dark mid-month. Outside the window the script logs a `skip:` line and exits 0,
+so a quiet log overnight is the system working rather than the agent dying.
 
 Point it at `hasino` only. **Do not add a second job for `hasino-admin`.**
 
 ### Confirming it actually works
 
-Do not trust a fast reply, and do not trust the pinger's own dashboard. Asking
-is what makes the service awake, so a quick response proves nothing about the
-minute before you asked — and a scheduler showing green rows only proves it
-sent a request somewhere. This repo has already had one cron that was
-configured, showed no errors, and had never run.
+Do not trust a fast reply. Asking is what makes the service awake, so a quick
+response proves nothing about the minute before you asked — and a scheduler
+showing green rows only proves it sent a request somewhere. This repo has
+already had two schedulers that looked configured and had never usefully run: a
+Render cron on a plan that does not include cron, and a cron-job.org job that
+showed no errors while production was still cold-starting on every visit.
 
 `/healthz` reports `uptimeSeconds`. A free-tier spin-down destroys the process,
 so uptime is time since the last cold start, and one request settles it:
@@ -303,17 +339,23 @@ curl -s https://hasino.onrender.com/healthz
 - **Uptime of seconds** — this request woke it. It is **not** working.
 
 Check it after the service has been left alone for a while, not right after
-loading the site yourself.
-
-`scripts/keepalive.ts` wraps the same request and states the verdict in words:
+loading the site yourself. `--status` shows the same verdict from the log
+without touching the service at all, which is the version that cannot lie to
+you by waking it:
 
 ```
-KEEPALIVE_URL=https://hasino.onrender.com/healthz node scripts/keepalive.ts
+bash scripts/install-keepalive-cron.sh --status
 ```
 
 ```
 keepalive: service uptime 4h 12m — it has not been allowed to sleep in that
 time, so the pinger is working.
+```
+
+`scripts/keepalive.ts` is the ping on its own, runnable anywhere:
+
+```
+KEEPALIVE_URL=https://hasino.onrender.com/healthz node scripts/keepalive.ts
 ```
 
 Set `KEEPALIVE_EXPECT_AWAKE=true` to make it exit 1 on a just-woken service, so
@@ -331,13 +373,13 @@ Both are Render answering *instead of* the app, so the request never wakes it:
 
 ### Running the pinger somewhere else
 
-If cron-job.org ever lapses, `scripts/keepalive.ts` is the same request in a
-form any scheduler can run — a laptop, a spare box, a paid Render cron. It
-depends on nothing but Node: no database, no provider keys.
+`scripts/keepalive.ts` depends on nothing but Node: no database, no provider
+keys. Any scheduler can run it — a spare box, a Raspberry Pi, a paid Render
+cron — and `keepalive-cron.sh` is the wrapper to point that scheduler at.
 
 Env: `KEEPALIVE_INTERVAL_MS` (default 300000), `KEEPALIVE_DURATION_MS` (default
-300000; **0 means ping once and exit**, which is the right shape for a
-scheduler with its own cadence), `KEEPALIVE_TIMEOUT_MS` (30000),
+300000; **0 means ping once and exit**, which is what `keepalive-cron.sh` sets,
+because the scheduler owns the cadence), `KEEPALIVE_TIMEOUT_MS` (30000),
 `KEEPALIVE_ATTEMPTS` (3). Exit 0 if a ping reached the app, 1 if none did.
 
 ### The background jobs are a different problem

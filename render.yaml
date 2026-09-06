@@ -11,13 +11,17 @@
 # knowing before you trust anything you see here:
 #
 #   1. The first request after an idle period is slow. That is the platform,
-#      not the app. This is now largely handled: cron-job.org fetches /healthz
-#      every 10 minutes between 00:00 and 18:00 UTC (05:30-23:30 IST), which is
-#      the inbound HTTP that resets Render's idle timer. Outside that window the
-#      service still sleeps, on purpose — 750 free instance-hours a month across
-#      the whole workspace against 744 hours in a 31-day month means a 24/7 ping
-#      would starve every other free service. DEPLOY.md has the arithmetic, and
-#      scripts/keepalive.ts is the same request in runnable form.
+#      not the app. This is handled from OUTSIDE this file, by a scheduler on a
+#      machine we own — a launchd agent installed by
+#      scripts/install-keepalive-cron.sh — which fetches /healthz every 10
+#      minutes between 00:00 and 18:00 UTC (05:30-23:30 IST). That inbound HTTP
+#      is what resets Render's idle timer. Outside that window the service still
+#      sleeps, on purpose — 750 free instance-hours a month across the whole
+#      workspace against 744 hours in a 31-day month means a 24/7 ping would
+#      starve every other free service. It also sleeps whenever that machine is
+#      off, which is the accepted cost of having no third-party pinger in the
+#      path. DEPLOY.md has the arithmetic, and scripts/keepalive.ts is the same
+#      request in runnable form.
 #   2. The background workers run INSIDE this process (startWorkers in
 #      src/http/server.ts). While the service is asleep the hold sweeper, the
 #      refund worker and the notification sender are not running: abandoned

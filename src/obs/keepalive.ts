@@ -243,8 +243,8 @@ export function keepaliveConfigFromEnv(env: NodeJS.ProcessEnv): KeepaliveConfig 
 
   const intervalMs = num('KEEPALIVE_INTERVAL_MS', 5 * 60_000, 1);
   // Zero is meaningful and allowed: ping once and exit. That is the right
-  // shape for a scheduler with its own tight cadence — cron-job.org firing
-  // every 10 minutes wants a single ping, not a process that lingers.
+  // shape for a scheduler with its own tight cadence — the local launchd agent
+  // firing every 10 minutes wants a single ping, not a process that lingers.
   const durationMs = num('KEEPALIVE_DURATION_MS', 5 * 60_000, 0);
   const timeoutMs = num('KEEPALIVE_TIMEOUT_MS', 30_000, 1);
   const attempts = num('KEEPALIVE_ATTEMPTS', 3, 1);
